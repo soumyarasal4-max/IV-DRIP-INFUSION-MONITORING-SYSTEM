@@ -1,0 +1,10 @@
+# Arduino IDE compile targets and cache junk
+**/build/
+**/bin/
+layout/
+*.elf
+*.hex
+
+# Personal Secrets and Dynamic Local Configurations
+src/config.h
+.env
