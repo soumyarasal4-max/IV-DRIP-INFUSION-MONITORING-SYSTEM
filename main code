@@ -1,0 +1,136 @@
+#include <SoftwareSerial.h>
+
+// Pin Definitions
+#define TRIG_PIN 5
+#define ECHO_PIN 4
+#define LDR_PIN A0
+
+// Bottle height in cm
+#define BOTTLE_HEIGHT 12
+
+// ThingSpeak settings
+String apiKey = "YOUR_API_KEY";
+String ssid = "YOUR_WIFI_SSID";
+String password = "YOUR_WIFI_PASSWORD";
+
+// ESP8266 Serial
+SoftwareSerial esp8266(2, 3); // RX, TX
+
+// LDR baseline (no bubble)
+int baseline_ldr = 800;
+int threshold = 100; // deviation range
+
+void setup() {
+  Serial.begin(9600);
+  esp8266.begin(9600);
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(LDR_PIN, INPUT);
+
+  Serial.println("Initializing...");
+  connectWiFi();
+}
+
+void loop() {
+  float level = getFluidLevel();
+  float percentage = (level / BOTTLE_HEIGHT) * 100;
+  int ldrValue = analogRead(LDR_PIN);
+  bool bubbleDetected = detectBubble(ldrValue);
+
+  Serial.print("Fluid Level: ");
+  Serial.print(level);
+  Serial.println(" cm");
+
+  Serial.print("Percentage: ");
+  Serial.print(percentage);
+  Serial.println(" %");
+
+  Serial.print("LDR Value: ");
+  Serial.println(ldrValue);
+
+  Serial.print("Bubble Detected: ");
+  Serial.println(bubbleDetected ? "YES" : "NO");
+
+  // Alert if fluid low
+  if (percentage <= 16.6) {
+    Serial.println("⚠️ ALERT: Drip level low! Change IV bag.");
+  }
+
+  // Alert if bubble detected
+  if (bubbleDetected) {
+    Serial.println("⚠️ ALERT: Bubble detected in drip!");
+  }
+
+  // Send to ThingSpeak
+  sendToThingSpeak(percentage, ldrValue, bubbleDetected);
+
+  delay(15000); // Send every 15 seconds
+}
+
+// --- Ultrasonic Sensor: Get Fluid Level ---
+float getFluidLevel() {
+  long duration;
+  float distance, level;
+
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  duration = pulseIn(ECHO_PIN, HIGH);
+  distance = (duration * 0.034) / 2; // cm
+
+  level = BOTTLE_HEIGHT - distance;  // l = height - d
+
+  if (level < 0) level = 0;
+  if (level > BOTTLE_HEIGHT) level = BOTTLE_HEIGHT;
+
+  return level;
+}
+
+// --- LDR: Detect Bubble Formation ---
+bool detectBubble(int ldrValue) {
+  if (ldrValue > baseline_ldr + threshold) {
+    return true; // Bubble detected
+  }
+  return false;
+}
+
+// --- ESP8266: Connect to WiFi ---
+void connectWiFi() {
+  esp8266.println("AT+RST");
+  delay(2000);
+  esp8266.println("AT+CWMODE=1");
+  delay(1000);
+
+  String cmd = "AT+CWJAP=\"" + ssid + "\",\"" + password + "\"";
+  esp8266.println(cmd);
+  delay(5000);
+
+  Serial.println("WiFi Connected!");
+}
+
+// --- ThingSpeak: Send Data ---
+void sendToThingSpeak(float percentage, int ldrValue, bool bubble) {
+  String url = "GET /update?api_key=" + apiKey
+             + "&field1=" + String(percentage)
+             + "&field2=" + String(ldrValue)
+             + "&field3=" + String(bubble ? 1 : 0)
+             + " HTTP/1.1\r\nHost: api.thingspeak.com\r\n\r\n";
+
+  esp8266.println("AT+CIPSTART=\"TCP\",\"api.thingspeak.com\",80");
+  delay(2000);
+
+  esp8266.println("AT+CIPSEND=" + String(url.length()));
+  delay(1000);
+
+  esp8266.print(url);
+  delay(2000);
+
+  esp8266.println("AT+CIPCLOSE");
+  delay(1000);
+
+  Serial.println("Data sent to ThingSpeak.");
+}
